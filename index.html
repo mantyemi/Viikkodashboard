@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Viikkoseuranta</title>
+<style>
+:root {
+  --brand: #632e38; --brand-light: #f5eced; --brand-mid: #8a4a53;
+  --ok: #2d7a4f; --ok-bg: #e8f5ee;
+  --empty: #888780; --empty-bg: #f1efe8;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #f7f5f5; padding: 24px 16px; }
+.container { max-width: 1100px; margin: 0 auto; }
+
+.header { background: var(--brand); color: #fff; padding: 16px 20px; border-radius: 12px 12px 0 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.header h1 { font-size: 17px; font-weight: 500; }
+
+.sync-status { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 500; }
+.sync-status.ok { background: #e8f5ee; color: #2d7a4f; }
+.sync-status.saving { background: #fff8ee; color: #a05c00; }
+.sync-status.error { background: #fce8ea; color: #a02030; }
+.sync-status.loading { background: #f1efe8; color: #888; }
+
+.week-nav { display: flex; align-items: center; background: var(--brand-light); border: 0.5px solid #d9b8bb; border-top: none; }
+.week-nav button { background: none; border: none; cursor: pointer; padding: 10px 16px; font-size: 18px; color: var(--brand); }
+.week-nav button:hover { background: #ecdde0; }
+.week-nav button:disabled { color: #ccc; cursor: default; }
+.week-nav button:disabled:hover { background: none; }
+.week-info { flex: 1; text-align: center; font-size: 13px; font-weight: 500; color: var(--brand); padding: 10px 0; }
+.week-info span { font-weight: 400; color: var(--brand-mid); font-size: 12px; margin-left: 6px; }
+
+.week-tabs { display: flex; background: #ecdde0; border: 0.5px solid #d9b8bb; border-top: none; padding: 8px 12px; gap: 6px; flex-wrap: wrap; }
+.week-tab { font-size: 11px; padding: 4px 12px; border-radius: 20px; border: 0.5px solid #d9b8bb; background: #fff; color: var(--brand-mid); cursor: pointer; white-space: nowrap; }
+.week-tab:hover { background: var(--brand-light); }
+.week-tab.active { background: var(--brand); color: #fff; border-color: var(--brand); font-weight: 500; }
+.week-tab.current::after { content: ' ●'; font-size: 8px; vertical-align: middle; }
+
+.summary-bar { background: #fff; border: 0.5px solid #d9b8bb; border-top: none; padding: 10px 18px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 42px; }
+.summary-bar .sb-label { font-size: 11px; color: var(--brand-mid); font-weight: 500; margin-right: 4px; white-space: nowrap; }
+.sb-chip { display: flex; align-items: center; gap: 5px; background: var(--brand-light); border: 0.5px solid #d9b8bb; border-radius: 20px; padding: 3px 10px; font-size: 11px; }
+.sb-chip .sb-task { color: var(--brand); font-weight: 500; }
+.sb-chip .sb-tgt { color: var(--brand-mid); }
+.sb-chip .sb-done.ok { color: var(--ok); font-weight: 500; }
+.sb-chip .sb-done.low { color: #a02030; font-weight: 500; }
+.sb-chip .sb-done.neutral { color: var(--empty); }
+.sb-empty { font-size: 11px; color: #bbb; font-style: italic; }
+
+.controls { display: flex; gap: 8px; align-items: center; padding: 9px 16px; background: var(--brand-light); border: 0.5px solid #d9b8bb; border-top: none; flex-wrap: wrap; }
+.controls label { font-size: 12px; color: var(--brand); font-weight: 500; }
+.controls select, .controls input[type=text] { font-size: 12px; padding: 4px 8px; border: 0.5px solid #d9b8bb; border-radius: 6px; background: #fff; color: #111; height: 29px; }
+.controls input[type=text] { width: 130px; }
+.controls select { width: 170px; }
+.controls button { font-size: 12px; padding: 4px 14px; border: 0.5px solid var(--brand); border-radius: 6px; background: var(--brand); color: #fff; cursor: pointer; height: 29px; }
+.controls button.sec { background: transparent; color: var(--brand); }
+.controls button:hover { opacity: 0.85; }
+.readonly-note { font-size: 11px; color: #a05c00; background: #fff8ee; border: 0.5px solid #f0c080; border-radius: 6px; padding: 4px 12px; }
+
+.wrap { border: 0.5px solid #d9b8bb; border-top: none; border-radius: 0 0 12px 12px; overflow-x: auto; background: #fff; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 760px; }
+.team-header td { background: var(--brand); color: #fff; font-size: 12px; font-weight: 500; padding: 7px 16px; letter-spacing: 0.04em; }
+.team-header-dynamo td { background: var(--brand-mid); }
+thead tr { background: var(--brand-light); }
+th { font-size: 11px; font-weight: 500; color: var(--brand); padding: 8px 6px; text-align: center; border-bottom: 1px solid #d9b8bb; border-right: 0.5px solid #e8d0d3; }
+th:first-child { text-align: left; padding-left: 16px; width: 120px; }
+th.today { background: var(--brand); color: #fff; }
+td { padding: 5px 4px; border-bottom: 0.5px solid #eee; border-right: 0.5px solid #eee; vertical-align: top; }
+td:first-child { padding-left: 14px; vertical-align: middle; }
+
+.member-name { display: flex; align-items: center; gap: 7px; }
+.avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 10px; font-weight: 500; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.avatar.dyn { background: var(--brand-mid); }
+.member-label { font-size: 13px; color: #111; cursor: pointer; border-bottom: 1px dashed transparent; }
+.member-label:hover { border-bottom-color: var(--brand); }
+.member-edit { font-size: 13px; border: 0.5px solid var(--brand); border-radius: 4px; padding: 2px 6px; width: 88px; color: #111; }
+.remove-btn { margin-left: auto; cursor: pointer; color: #ccc; font-size: 18px; background: none; border: none; padding: 0 2px; }
+.remove-btn:hover { color: var(--brand); }
+
+.day-cell { display: flex; flex-direction: column; gap: 5px; padding: 3px 2px; }
+.day-cell.vapaa-cell { background: #f1efe8; }
+.task-block { background: #fafafa; border: 0.5px solid #e8e8e8; border-radius: 5px; padding: 4px 5px; display: flex; flex-direction: column; gap: 2px; }
+.task-block.vapaa-block { background: #f1efe8; border-color: #ddd9d3; }
+.task-input { font-size: 11px; border: 0.5px solid #ddd; border-radius: 4px; padding: 2px 5px; width: 100%; background: #fff; color: #111; }
+.task-input:focus { outline: none; border-color: var(--brand); }
+.task-input:disabled { background: #f1efe8; color: #aaa; border-color: #e0ddd7; }
+.kpl-row { display: flex; gap: 3px; align-items: center; }
+.kpl-input { font-size: 12px; font-weight: 500; border: 0.5px solid #ddd; border-radius: 4px; padding: 2px 4px; width: 52px; text-align: center; background: #fff; color: #111; }
+.kpl-input:focus { outline: none; border-color: var(--brand); }
+.kpl-input:disabled { background: #f1efe8; color: #aaa; border-color: #e0ddd7; }
+.kpl-sep { font-size: 11px; color: var(--empty); }
+.target-input { font-size: 11px; border: none; border-radius: 4px; padding: 2px 3px; width: 42px; text-align: center; color: var(--empty); background: transparent; }
+.target-input:focus { outline: none; border-bottom: 0.5px solid #ccc; }
+.target-input:disabled { color: #ccc; }
+.badge { font-size: 10px; padding: 1px 5px; border-radius: 4px; font-weight: 500; display: inline-block; }
+.badge.ok { background: var(--ok-bg); color: var(--ok); }
+.badge.low { background: #fce8ea; color: #a02030; }
+.badge.empty { background: var(--empty-bg); color: var(--empty); }
+.vapaa-label { font-size: 11px; font-weight: 500; color: #888; background: #e4e2db; border-radius: 4px; padding: 2px 8px; text-align: center; }
+.badge-holder { min-height: 18px; }
+
+.task-block-actions { display: flex; gap: 3px; align-items: center; margin-top: 1px; }
+.tb-btn { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 0.5px solid #ddd; background: transparent; color: #888; cursor: pointer; }
+.tb-btn:hover { background: var(--brand-light); color: var(--brand); border-color: #d9b8bb; }
+.tb-btn.del { color: #c08; border-color: #e8c0d0; }
+.tb-btn.del:hover { background: #fce8ea; color: #a02030; border-color: #f09595; }
+.tb-btn.vapaa-on { background: #e4e2db; color: #666; border-color: #bbb; }
+
+.add-task-btn { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 0.5px dashed #d9b8bb; background: transparent; color: var(--brand-mid); cursor: pointer; width: 100%; text-align: center; margin-top: 1px; }
+.add-task-btn:hover { background: var(--brand-light); }
+
+.total-row td { background: var(--brand-light); font-weight: 500; font-size: 12px; text-align: center; color: var(--brand); padding: 7px 4px; border-top: 1px solid #d9b8bb; }
+.total-row td:first-child { text-align: left; padding-left: 16px; }
+.total-row.dynamo-total td { background: #f0e8ea; color: var(--brand-mid); }
+
+.legend { display: flex; gap: 12px; padding: 8px 20px; font-size: 11px; color: #888; flex-wrap: wrap; margin-top: 2px; }
+.legend span { display: flex; align-items: center; gap: 4px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+
+.ro-task { font-size: 11px; padding: 3px 5px; border-radius: 4px; background: #fafafa; border: 0.5px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+.ro-task.vapaa { background: #f1efe8; color: #aaa; }
+.ro-task-name { color: #444; font-size: 11px; flex: 1; }
+
+.loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(247,245,245,0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 100; }
+.loading-spinner { width: 36px; height: 36px; border: 3px solid #d9b8bb; border-top-color: var(--brand); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 13px; color: var(--brand-mid); }
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Ladataan tietoja...</div>
+</div>
+
+<div class="container">
+  <div class="header">
+    <h1>&#128197; Viikkoseuranta</h1>
+    <span id="syncStatus" class="sync-status loading">&#9679; Yhdistetään...</span>
+  </div>
+
+  <div class="week-nav">
+    <button id="btnPrev" onclick="changeWeek(-1)">&#8592;</button>
+    <div class="week-info" id="weekInfo"></div>
+    <button id="btnNext" onclick="changeWeek(1)">&#8594;</button>
+  </div>
+
+  <div class="week-tabs" id="weekTabs"></div>
+  <div class="summary-bar" id="summaryBar"><span class="sb-empty">Ladataan...</span></div>
+
+  <div class="controls" id="controlsBar">
+    <label>Tiimi:</label>
+    <select id="teamSelect">
+      <option value="kohde">Kohdeassistentit</option>
+      <option value="dynamo">Dynamo</option>
+    </select>
+    <label>Nimi:</label>
+    <input type="text" id="newMember" placeholder="Lisää jäsen..." onkeydown="if(event.key==='Enter')addMember()" />
+    <button onclick="addMember()">+ Lisää</button>
+    <button class="sec" onclick="resetWeek()">&#8635; Tyhjennä viikko</button>
+    <span id="readonlyNote" class="readonly-note" style="display:none">&#128274; Vanha viikko — vain luku</span>
+  </div>
+
+  <div class="wrap">
+    <table id="mainTable">
+      <thead><tr id="headerRow"><th>Tiimin jäsen</th></tr></thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot" style="background:#e8f5ee;border:1.5px solid #2d7a4f"></span> Tavoite saavutettu</span>
+    <span><span class="dot" style="background:#fce8ea;border:1.5px solid #a02030"></span> Alle tavoitteen</span>
+    <span><span class="dot" style="background:#f1efe8;border:1.5px solid #aaa"></span> Vapaa</span>
+    <span style="margin-left:auto;color:#bbb">Nimeä muokkaat klikkaamalla sitä</span>
+  </div>
+</div>
+
+<script>
+// ---- Supabase config ----
+const SUPABASE_URL = 'https://uehdhlilxgpekxrrexdd.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVlaGRobGlseGdwZWt4cnJleGRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMzE0ODEsImV4cCI6MjA5MzcwNzQ4MX0.X8ee4oQO2Dl0uurXgUm6CEbKPTbnOuPFFOdC1ScZqgs';
+const RECORD_ID = 'main';
+
+async function sbFetch(method, body) {
+  const url = SUPABASE_URL + '/rest/v1/dashboard_data';
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json',
+    'Prefer': method === 'POST' ? 'resolution=merge-duplicates' : ''
+  };
+  const res = await fetch(url + (method === 'GET' ? '?id=eq.' + RECORD_ID + '&select=data' : ''), {
+    method, headers, body: body ? JSON.stringify(body) : undefined
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return method === 'GET' ? res.json() : res;
+}
+
+async function loadFromSupabase() {
+  const rows = await sbFetch('GET');
+  if (rows && rows.length > 0) return rows[0].data;
+  return null;
+}
+
+async function saveToSupabase(data) {
+  await sbFetch('POST', { id: RECORD_ID, data, updated_at: new Date().toISOString() });
+}
+
+// ---- Date helpers ----
+const DAYS = ['Ma','Ti','Ke','To','Pe','La','Su'];
+
+function getMondayOf(date) {
+  const d = new Date(date); d.setHours(0,0,0,0);
+  const day = d.getDay();
+  d.setDate(d.getDate() + (day===0 ? -6 : 1-day));
+  return d;
+}
+function getWeekDates(monday) {
+  return Array.from({length:7}, (_,i) => { const d=new Date(monday); d.setDate(d.getDate()+i); return d; });
+}
+function getWeekNum(d) {
+  const date=new Date(d); date.setHours(0,0,0,0);
+  date.setDate(date.getDate()+3-(date.getDay()+6)%7);
+  const w1=new Date(date.getFullYear(),0,4);
+  return 1+Math.round(((date-w1)/86400000-3+(w1.getDay()+6)%7)/7);
+}
+function fmt(d) { return d.getDate()+'.'+(d.getMonth()+1)+'.'; }
+function mondayKey(monday) { return monday.getFullYear()+'-W'+String(getWeekNum(monday)).padStart(2,'0'); }
+function getMondayFromYearWeek(year,week) {
+  const jan4=new Date(year,0,4);
+  const d=new Date(getMondayOf(jan4));
+  d.setDate(d.getDate()+(week-1)*7);
+  return d;
+}
+
+// ---- State ----
+let state = {
+  teams: { kohde:['Aino K.','Emilia S.','Jasmin Ha','Jasmin Hu','Linda L.','Riina S.'], dynamo:['Henna D.','Julia H.','Julius H.','Kari R.','Laura A.','Maija A.','Sanni A.'] },
+  weeks: {}
+};
+
+const todayMonday = getMondayOf(new Date());
+let currentMonday = getMondayOf(new Date());
+const isCurrentWeek = () => currentMonday.getTime()===todayMonday.getTime();
+
+// Debounce save — ei tallenneta jokaista näppäinpainallusta erikseen
+let saveTimer = null;
+function scheduleSave() {
+  setSyncStatus('saving');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      await saveToSupabase(state);
+      setSyncStatus('ok');
+    } catch(e) {
+      setSyncStatus('error');
+    }
+  }, 800);
+}
+
+function setSyncStatus(status) {
+  const el = document.getElementById('syncStatus');
+  if(!el) return;
+  const map = {
+    ok:      { cls:'ok',      text:'&#10003; Tallennettu' },
+    saving:  { cls:'saving',  text:'&#8635; Tallennetaan...' },
+    error:   { cls:'error',   text:'&#9888; Tallennusvirhe' },
+    loading: { cls:'loading', text:'&#9679; Yhdistetään...' },
+    live:    { cls:'ok',      text:'&#9679; Reaaliaikainen' }
+  };
+  const s = map[status] || map.ok;
+  el.className = 'sync-status ' + s.cls;
+  el.innerHTML = s.text;
+}
+
+function getWeekData(monday) {
+  const key=mondayKey(monday);
+  if(!state.weeks[key]) state.weeks[key]={cells:{}};
+  return state.weeks[key];
+}
+
+function cellKey(t,m,d){ return t+'__'+m+'__'+d; }
+function getCellTasks(weekData, team, member, day) {
+  const key=cellKey(team,member,day);
+  if(!weekData.cells[key]||!Array.isArray(weekData.cells[key])) {
+    weekData.cells[key]=[{task:'',kpl:'',target:'',vapaa:false}];
+  }
+  return weekData.cells[key];
+}
+
+function initials(n){ const p=n.trim().split(' '); return p.length>=2?(p[0][0]+p[1][0]).toUpperCase():n.slice(0,2).toUpperCase(); }
+
+// ---- Header ----
+function initHeader(dates) {
+  const hr=document.getElementById('headerRow');
+  while(hr.children.length>1) hr.removeChild(hr.lastChild);
+  const today=new Date(); today.setHours(0,0,0,0);
+  dates.forEach((d,i)=>{
+    const th=document.createElement('th');
+    th.textContent=DAYS[i]+' '+fmt(d);
+    if(d.toDateString()===today.toDateString()) th.classList.add('today');
+    hr.appendChild(th);
+  });
+}
+
+// ---- Task block ----
+function makeTaskBlock(team,member,dayIdx,taskIdx,task,totalTasks) {
+  const block=document.createElement('div');
+  block.className='task-block'+(task.vapaa?' vapaa-block':'');
+  block.id='tb_'+team+'_'+member+'_'+dayIdx+'_'+taskIdx;
+
+  const safeTask=(task.task||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const kplVal=task.kpl!==''&&task.kpl!==undefined?task.kpl:'';
+  const tgVal=task.target!==''&&task.target!==undefined?task.target:'';
+  const dis=task.vapaa?'disabled':'';
+
+  const kpl=task.kpl!==''&&task.kpl!==undefined?parseInt(task.kpl):null;
+  const tg=task.target!==''&&task.target!==undefined?parseInt(task.target):null;
+  let badge='';
+  if(task.vapaa) badge='<span class="vapaa-label">&#9723; Vapaa</span>';
+  else if(kpl===null) badge='<span class="badge empty">Ei syötetty</span>';
+  else if(tg!==null&&!isNaN(tg)) badge=kpl>=tg?'<span class="badge ok">'+kpl+'/'+tg+' kpl</span>':'<span class="badge low">'+kpl+'/'+tg+' kpl</span>';
+  else badge='<span class="badge empty">'+kpl+' kpl</span>';
+
+  const canDelete=totalTasks>1;
+
+  block.innerHTML=
+    '<input class="task-input" type="text" placeholder="Tehtävä..." value="'+safeTask+'" '+dis+
+    ' oninput="updateTask(\''+team+'\',\''+member+'\','+dayIdx+','+taskIdx+',\'task\',this.value)" />'+
+    '<div class="kpl-row">'+
+    '<input class="kpl-input" type="number" min="0" placeholder="0" value="'+kplVal+'" '+dis+
+    ' oninput="updateTask(\''+team+'\',\''+member+'\','+dayIdx+','+taskIdx+',\'kpl\',this.value)" />'+
+    '<span class="kpl-sep">/</span>'+
+    '<input class="target-input" type="number" min="0" placeholder="–" value="'+tgVal+'" '+dis+
+    ' oninput="updateTask(\''+team+'\',\''+member+'\','+dayIdx+','+taskIdx+',\'target\',this.value)" title="Tavoite" />'+
+    '<span class="kpl-sep" style="font-size:10px">kpl</span>'+
+    '</div>'+
+    '<div class="badge-holder">'+badge+'</div>'+
+    '<div class="task-block-actions">'+
+    '<button class="tb-btn'+(task.vapaa?' vapaa-on':'')+'" onclick="toggleVapaa(\''+team+'\',\''+member+'\','+dayIdx+','+taskIdx+')">'+
+    (task.vapaa?'Poista vapaa':'Merkitse vapaaksi')+'</button>'+
+    (canDelete?'<button class="tb-btn del" onclick="deleteTask(\''+team+'\',\''+member+'\','+dayIdx+','+taskIdx+')" title="Poista tehtävä">&#10005;</button>':'')+
+    '</div>';
+  return block;
+}
+
+// ---- Render rows ----
+function renderRows(dates, readonly) {
+  const tbody=document.getElementById('tableBody');
+  tbody.innerHTML='';
+  const weekData=getWeekData(currentMonday);
+
+  ['kohde','dynamo'].forEach(teamId=>{
+    const isDyn=teamId==='dynamo';
+    const label=isDyn?'Dynamo':'Kohdeassistentit';
+
+    const hdr=document.createElement('tr');
+    hdr.className='team-header'+(isDyn?' team-header-dynamo':'');
+    const htd=document.createElement('td'); htd.colSpan=8; htd.textContent=label;
+    hdr.appendChild(htd); tbody.appendChild(hdr);
+
+    (state.teams[teamId]||[]).forEach(member=>{
+      const tr=document.createElement('tr');
+      const nameTd=document.createElement('td');
+      if(readonly){
+        nameTd.innerHTML='<div class="member-name"><div class="avatar'+(isDyn?' dyn':'')+'">'+initials(member)+'</div><span style="font-size:13px;color:#111">'+member+'</span></div>';
+      } else {
+        nameTd.innerHTML='<div class="member-name">'+
+          '<div class="avatar'+(isDyn?' dyn':'')+'">'+initials(member)+'</div>'+
+          '<span class="member-label" onclick="startEdit(\''+teamId+'\',\''+member+'\',this)" title="Klikkaa muokataksesi">'+member+'</span>'+
+          '<button class="remove-btn" onclick="removeMember(\''+teamId+'\',\''+member+'\')" title="Poista">&#215;</button>'+
+          '</div>';
+      }
+      tr.appendChild(nameTd);
+
+      dates.forEach((_,dayIdx)=>{
+        const tasks=getCellTasks(weekData,teamId,member,dayIdx);
+        const td=document.createElement('td');
+
+        if(readonly){
+          const allVapaa=tasks.every(t=>t.vapaa);
+          const div=document.createElement('div');
+          div.className='day-cell'+(allVapaa?' vapaa-cell':'');
+          tasks.forEach(t=>{
+            const kpl=t.kpl!==''&&t.kpl!==undefined?parseInt(t.kpl):null;
+            const tg=t.target!==''&&t.target!==undefined?parseInt(t.target):null;
+            let badge='';
+            if(t.vapaa) badge='<span class="vapaa-label">&#9723; Vapaa</span>';
+            else if(kpl===null) badge='<span class="badge empty">–</span>';
+            else if(tg!==null&&!isNaN(tg)) badge=kpl>=tg?'<span class="badge ok">'+kpl+'/'+tg+'</span>':'<span class="badge low">'+kpl+'/'+tg+'</span>';
+            else badge='<span class="badge empty">'+kpl+'</span>';
+            const row=document.createElement('div');
+            row.className='ro-task'+(t.vapaa?' vapaa':'');
+            row.innerHTML='<span class="ro-task-name">'+(t.vapaa?'Vapaa':(t.task||'–'))+'</span>'+badge;
+            div.appendChild(row);
+          });
+          td.appendChild(div);
+        } else {
+          const div=document.createElement('div');
+          div.className='day-cell';
+          div.id='dc_'+teamId+'_'+member+'_'+dayIdx;
+          tasks.forEach((task,taskIdx)=>{ div.appendChild(makeTaskBlock(teamId,member,dayIdx,taskIdx,task,tasks.length)); });
+          const addBtn=document.createElement('button');
+          addBtn.className='add-task-btn';
+          addBtn.textContent='+ Lisää tehtävä';
+          addBtn.onclick=()=>addTask(teamId,member,dayIdx);
+          div.appendChild(addBtn);
+          td.appendChild(div);
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    const totRow=document.createElement('tr');
+    totRow.className='total-row'+(isDyn?' dynamo-total':'');
+    const totLabel=document.createElement('td'); totLabel.textContent='Yht. kpl';
+    totRow.appendChild(totLabel);
+    for(let i=0;i<7;i++){
+      const td=document.createElement('td'); td.id='tot_'+teamId+'_'+i;
+      let sum=0,any=false;
+      (state.teams[teamId]||[]).forEach(m=>{
+        getCellTasks(weekData,teamId,m,i).forEach(t=>{
+          if(!t.vapaa&&t.kpl!==''&&t.kpl!==undefined){sum+=parseInt(t.kpl)||0;any=true;}
+        });
+      });
+      td.textContent=any?sum:'–';
+      totRow.appendChild(td);
+    }
+    tbody.appendChild(totRow);
+  });
+}
+
+// ---- Badge refresh ----
+function refreshBadge(team,member,dayIdx,taskIdx,task){
+  const block=document.getElementById('tb_'+team+'_'+member+'_'+dayIdx+'_'+taskIdx);
+  if(!block) return;
+  const badgeDiv=block.querySelector('.badge-holder');
+  if(!badgeDiv) return;
+  const kpl=task.kpl!==''&&task.kpl!==undefined?parseInt(task.kpl):null;
+  const tg=task.target!==''&&task.target!==undefined?parseInt(task.target):null;
+  let badge='';
+  if(task.vapaa) badge='<span class="vapaa-label">&#9723; Vapaa</span>';
+  else if(kpl===null) badge='<span class="badge empty">Ei syötetty</span>';
+  else if(tg!==null&&!isNaN(tg)) badge=kpl>=tg?'<span class="badge ok">'+kpl+'/'+tg+' kpl</span>':'<span class="badge low">'+kpl+'/'+tg+' kpl</span>';
+  else badge='<span class="badge empty">'+kpl+' kpl</span>';
+  badgeDiv.innerHTML=badge;
+}
+
+// ---- Task mutations ----
+function updateTask(team,member,dayIdx,taskIdx,field,value){
+  if(!isCurrentWeek()) return;
+  const weekData=getWeekData(currentMonday);
+  const tasks=getCellTasks(weekData,team,member,dayIdx);
+  if(!tasks[taskIdx]) return;
+  tasks[taskIdx][field]=value;
+  scheduleSave();
+  refreshBadge(team,member,dayIdx,taskIdx,tasks[taskIdx]);
+  updateTotals(weekData);
+  renderSummary();
+}
+
+function addTask(team,member,dayIdx){
+  if(!isCurrentWeek()) return;
+  const weekData=getWeekData(currentMonday);
+  const tasks=getCellTasks(weekData,team,member,dayIdx);
+  tasks.push({task:'',kpl:'',target:'',vapaa:false});
+  scheduleSave();
+  refreshCell(team,member,dayIdx);
+  updateTotals(weekData);
+  renderSummary();
+}
+
+function deleteTask(team,member,dayIdx,taskIdx){
+  if(!isCurrentWeek()) return;
+  const weekData=getWeekData(currentMonday);
+  const tasks=getCellTasks(weekData,team,member,dayIdx);
+  if(tasks.length<=1) return;
+  tasks.splice(taskIdx,1);
+  scheduleSave();
+  refreshCell(team,member,dayIdx);
+  updateTotals(weekData);
+  renderSummary();
+}
+
+function toggleVapaa(team,member,dayIdx,taskIdx){
+  if(!isCurrentWeek()) return;
+  const weekData=getWeekData(currentMonday);
+  const tasks=getCellTasks(weekData,team,member,dayIdx);
+  if(!tasks[taskIdx]) return;
+  tasks[taskIdx].vapaa=!tasks[taskIdx].vapaa;
+  scheduleSave();
+  refreshCell(team,member,dayIdx);
+  updateTotals(weekData);
+  renderSummary();
+}
+
+function refreshCell(team,member,dayIdx){
+  const weekData=getWeekData(currentMonday);
+  const tasks=getCellTasks(weekData,team,member,dayIdx);
+  const div=document.getElementById('dc_'+team+'_'+member+'_'+dayIdx);
+  if(!div) return;
+  while(div.firstChild) div.removeChild(div.firstChild);
+  tasks.forEach((task,taskIdx)=>{ div.appendChild(makeTaskBlock(team,member,dayIdx,taskIdx,task,tasks.length)); });
+  const addBtn=document.createElement('button');
+  addBtn.className='add-task-btn';
+  addBtn.textContent='+ Lisää tehtävä';
+  addBtn.onclick=()=>addTask(team,member,dayIdx);
+  div.appendChild(addBtn);
+}
+
+function updateTotals(weekData){
+  ['kohde','dynamo'].forEach(teamId=>{
+    for(let i=0;i<7;i++){
+      let sum=0,any=false;
+      (state.teams[teamId]||[]).forEach(m=>{
+        getCellTasks(weekData,teamId,m,i).forEach(t=>{
+          if(!t.vapaa&&t.kpl!==''&&t.kpl!==undefined){sum+=parseInt(t.kpl)||0;any=true;}
+        });
+      });
+      const td=document.getElementById('tot_'+teamId+'_'+i);
+      if(td) td.textContent=any?sum:'–';
+    }
+  });
+}
+
+// ---- Summary bar ----
+function renderSummary(){
+  const bar=document.getElementById('summaryBar');
+  if(!bar) return;
+  const weekData=getWeekData(currentMonday);
+  const cells=weekData.cells||{};
+  const map={};
+  Object.values(cells).forEach(tasksArr=>{
+    if(!Array.isArray(tasksArr)) return;
+    tasksArr.forEach(t=>{
+      if(t.vapaa) return;
+      const name=(t.task||'').trim();
+      if(!name) return;
+      const key=name.toLowerCase();
+      if(!map[key]) map[key]={label:name,target:0,done:0,hasTarget:false,hasDone:false};
+      const tg=t.target!==''&&t.target!==undefined?parseInt(t.target):null;
+      const kpl=t.kpl!==''&&t.kpl!==undefined?parseInt(t.kpl):null;
+      if(tg!==null&&!isNaN(tg)){map[key].target+=tg;map[key].hasTarget=true;}
+      if(kpl!==null&&!isNaN(kpl)){map[key].done+=kpl;map[key].hasDone=true;}
+    });
+  });
+  const keys=Object.keys(map);
+  bar.innerHTML='';
+  if(keys.length===0){bar.innerHTML='<span class="sb-empty">Ei tehtäviä syötettynä.</span>';return;}
+  const lbl=document.createElement('span');
+  lbl.className='sb-label';
+  lbl.textContent='Viikon koonnit:';
+  bar.appendChild(lbl);
+  keys.sort().forEach(key=>{
+    const d=map[key];
+    const chip=document.createElement('div');
+    chip.className='sb-chip';
+    let doneClass='neutral';
+    if(d.hasDone&&d.hasTarget) doneClass=d.done>=d.target?'ok':'low';
+    let html='<span class="sb-task">'+d.label+'</span>';
+    if(d.hasTarget) html+='<span class="sb-tgt">tavoite '+d.target+' kpl</span>';
+    if(d.hasDone)   html+='<span class="sb-done '+doneClass+'">toteutunut '+d.done+' kpl</span>';
+    if(!d.hasTarget&&!d.hasDone) html+='<span class="sb-tgt">ei määriä</span>';
+    chip.innerHTML=html;
+    bar.appendChild(chip);
+  });
+}
+
+// ---- Week nav ----
+function changeWeek(dir){
+  const next=new Date(currentMonday);
+  next.setDate(next.getDate()+dir*7);
+  if(next>todayMonday) return;
+  currentMonday=next; render();
+}
+function jumpToWeek(ts){ currentMonday=new Date(ts); render(); }
+
+// ---- Week tabs ----
+function renderTabs(){
+  const tabs=document.getElementById('weekTabs');
+  tabs.innerHTML='';
+  const weeks=[];
+  const curKey=mondayKey(todayMonday);
+  Object.keys(state.weeks).forEach(key=>{
+    const hasData=state.weeks[key]&&state.weeks[key].cells&&Object.keys(state.weeks[key].cells).length>0;
+    if(hasData||key===curKey) weeks.push(key);
+  });
+  if(!weeks.includes(curKey)) weeks.push(curKey);
+  weeks.sort().reverse().forEach(key=>{
+    const [year,wStr]=key.split('-W');
+    const wNum=parseInt(wStr);
+    const monday=getMondayFromYearWeek(parseInt(year),wNum);
+    const dates=getWeekDates(monday);
+    const isActive=mondayKey(currentMonday)===key;
+    const isCur=key===curKey;
+    const tab=document.createElement('div');
+    tab.className='week-tab'+(isActive?' active':'')+(isCur?' current':'');
+    tab.textContent='Vk '+wNum+' ('+fmt(dates[0])+'–'+fmt(dates[6])+')';
+    tab.onclick=()=>jumpToWeek(monday.getTime());
+    tabs.appendChild(tab);
+  });
+}
+
+// ---- Member management ----
+function startEdit(team,oldName,el){
+  const inp=document.createElement('input');
+  inp.type='text'; inp.className='member-edit'; inp.value=oldName;
+  el.replaceWith(inp); inp.focus(); inp.select();
+  function commit(){
+    const newName=inp.value.trim();
+    if(newName&&newName!==oldName&&!state.teams[team].includes(newName)){
+      const idx=state.teams[team].indexOf(oldName);
+      if(idx>-1) state.teams[team][idx]=newName;
+      const newWeeks={};
+      Object.keys(state.weeks).forEach(wk=>{
+        const wd=state.weeks[wk]; const newCells={};
+        Object.keys(wd.cells||{}).forEach(k=>{
+          const parts=k.split('__');
+          if(parts[0]===team&&parts[1]===oldName) newCells[cellKey(team,newName,parts[2])]=wd.cells[k];
+          else newCells[k]=wd.cells[k];
+        });
+        newWeeks[wk]={cells:newCells};
+      });
+      state.weeks=newWeeks; scheduleSave(); render();
+    } else {
+      const span=document.createElement('span');
+      span.className='member-label'; span.textContent=oldName;
+      span.title='Klikkaa muokataksesi';
+      span.onclick=function(){ startEdit(team,oldName,this); };
+      inp.replaceWith(span);
+    }
+  }
+  inp.addEventListener('blur',commit);
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter') inp.blur(); if(e.key==='Escape'){inp.value=oldName;inp.blur();} });
+}
+
+function addMember(){
+  const team=document.getElementById('teamSelect').value;
+  const inp=document.getElementById('newMember');
+  const name=inp.value.trim();
+  if(!name||state.teams[team].includes(name)) return;
+  state.teams[team].push(name); scheduleSave(); inp.value=''; render();
+}
+
+function removeMember(team,member){
+  if(!confirm(member+' poistetaan tiimistä. Jatketaanko?')) return;
+  state.teams[team]=state.teams[team].filter(m=>m!==member);
+  scheduleSave(); render();
+}
+
+function resetWeek(){
+  if(!isCurrentWeek()){ alert('Voit tyhjentää vain kuluvan viikon.'); return; }
+  if(!confirm('Tyhjennetäänkö kaikki tämän viikon tiedot?')) return;
+  state.weeks[mondayKey(currentMonday)]={cells:{}}; scheduleSave(); render();
+}
+
+// ---- Main render ----
+function render(){
+  const dates=getWeekDates(currentMonday);
+  const wNum=getWeekNum(currentMonday);
+  const isCur=isCurrentWeek();
+  const readonly=!isCur;
+
+  document.getElementById('weekInfo').innerHTML=
+    'Viikko '+wNum+', '+dates[0].getFullYear()+
+    '<span>'+fmt(dates[0])+' – '+fmt(dates[6])+(isCur?' &nbsp;&#9679; kuluva viikko':' &nbsp;(arkisto)')+'</span>';
+  document.getElementById('btnNext').disabled=isCur;
+  ['teamSelect','newMember'].forEach(id=>{ const el=document.getElementById(id); if(el) el.disabled=readonly; });
+  document.getElementById('readonlyNote').style.display=readonly?'inline-block':'none';
+
+  initHeader(dates);
+  renderRows(dates,readonly);
+  renderTabs();
+  renderSummary();
+  getWeekData(currentMonday);
+}
+
+// ---- Reaaliaikainen päivitys (polling) ----
+let lastUpdated = null;
+
+async function pollUpdates(){
+  try {
+    const res = await fetch(
+      SUPABASE_URL+'/rest/v1/dashboard_data?id=eq.'+RECORD_ID+'&select=data,updated_at',
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer '+SUPABASE_KEY } }
+    );
+    if(!res.ok) return;
+    const rows = await res.json();
+    if(!rows||!rows.length) return;
+    const remote = rows[0];
+    if(remote.updated_at !== lastUpdated){
+      lastUpdated = remote.updated_at;
+      if(saveTimer) return; // Oma tallennus käynnissä — ei ylikirjoiteta
+      const remoteState = remote.data;
+      if(remoteState){
+        state = remoteState;
+        if(!state.teams) state.teams = { kohde:[], dynamo:[] };
+        if(!state.weeks) state.weeks = {};
+        render();
+        setSyncStatus('live');
+      }
+    }
+  } catch(e) {}
+}
+
+// ---- Init ----
+async function init(){
+  try {
+    const remote = await loadFromSupabase();
+    if(remote){
+      state = remote;
+      if(!state.teams) state.teams = { kohde:['Aino K.','Emilia S.','Jasmin Ha','Jasmin Hu','Linda L.','Riina S.'], dynamo:['Henna D.','Julia H.','Julius H.','Kari R.','Laura A.','Maija A.','Sanni A.'] };
+      if(!state.weeks) state.weeks = {};
+      lastUpdated = new Date().toISOString();
+    } else {
+      // Ensimmäinen käynnistys — tallennetaan oletusdata
+      await saveToSupabase(state);
+    }
+    setSyncStatus('live');
+  } catch(e) {
+    setSyncStatus('error');
+    console.error('Supabase-virhe:', e);
+  }
+  document.getElementById('loadingOverlay').style.display='none';
+  render();
+  // Päivitä 10 sekunnin välein
+  setInterval(pollUpdates, 10000);
+}
+
+init();
+</script>
+</body>
+</html>
