@@ -60,7 +60,7 @@ body { font-family: system-ui, sans-serif; background: #f7f5f5; padding: 24px 16
 .controls button { font-size: 12px; padding: 4px 14px; border: 0.5px solid var(--brand); border-radius: 6px; background: var(--brand); color: #fff; cursor: pointer; height: 29px; }
 .controls button.sec { background: transparent; color: var(--brand); }
 .controls button:hover { opacity: 0.85; }
-.readonly-note { font-size: 11px; color: #a05c00; background: #fff8ee; border: 0.5px solid #f0c080; border-radius: 6px; padding: 4px 12px; }
+.readonly-note { font-size: 11px; color: #a05c00; background: #fff8ee; border: 0.5px solid #f0c080; border-radius: 6px; padding: 4px 12px; display:inline-flex; align-items:center; gap:6px; }
 
 .wrap { border: 0.5px solid #d9b8bb; border-top: none; border-radius: 0 0 12px 12px; overflow-x: auto; background: #fff; }
 table { width: 100%; border-collapse: collapse; table-layout: auto; min-width: 700px; }
@@ -173,7 +173,10 @@ td.kaupat-sum-td { background: var(--yellow-light); border-left: 2px solid var(-
     <label>Nimi:</label>
     <input type="text" id="newMember" placeholder="Lisää jäsen..." onkeydown="if(event.key==='Enter')addMember()" />
     <button onclick="addMember()">+ Lisää</button>
-    <span id="readonlyNote" class="readonly-note" style="display:none">&#128274; Vanha viikko — vain luku</span>
+    <span id="readonlyNote" class="readonly-note" style="display:none">
+      &#128274; Vanha viikko — vain luku &nbsp;
+      <button onclick="unlockWeek()" style="font-size:11px;padding:1px 8px;border-radius:4px;border:1px solid #c8a060;background:#fff8ee;color:#a05c00;cursor:pointer;">&#128273; Avaa muokkaukseen</button>
+    </span>
   </div>
   <div class="wrap">
     <table id="mainTable">
@@ -286,6 +289,11 @@ let currentMonday=getMondayOf(new Date());
 const isCurrentWeek=()=>currentMonday.getTime()===todayMonday.getTime();
 const isPastWeek=()=>currentMonday.getTime()<todayMonday.getTime();
 const isFutureWeek=()=>currentMonday.getTime()>todayMonday.getTime();
+
+// Ylläpidon salasanalla avatut viikot
+const unlockedWeeks=new Set();
+function isUnlocked(){ return unlockedWeeks.has(mondayKey(currentMonday)); }
+function isReadonly(){ return isPastWeek() && !isUnlocked(); }
 
 // Solukohtainen tallennus — tallentaa vain muuttuneet solut
 const pendingCells={}; // weekKey__cellId -> value
@@ -506,7 +514,7 @@ function refreshBadge(team,member,dayIdx,taskIdx,task){
 }
 
 function updateTask(team,member,dayIdx,taskIdx,field,value){
-  if(isPastWeek())return;
+  if(isReadonly())return;
   const wd=getWeekData(currentMonday);
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(!tasks[taskIdx])return;
@@ -516,7 +524,7 @@ function updateTask(team,member,dayIdx,taskIdx,field,value){
   renderSummary();
 }
 function addTask(team,member,dayIdx){
-  if(isPastWeek())return;
+  if(isReadonly())return;
   const wd=getWeekData(currentMonday);
   const tasks=getCellTasks(wd,team,member,dayIdx);
   tasks.push({task:'',kpl:'',target:'',vapaa:false});
@@ -524,7 +532,7 @@ function addTask(team,member,dayIdx){
   refreshCell(team,member,dayIdx);renderSummary();
 }
 function deleteTask(team,member,dayIdx,taskIdx){
-  if(isPastWeek())return;
+  if(isReadonly())return;
   const wd=getWeekData(currentMonday);
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(tasks.length<=1)return;
@@ -533,7 +541,7 @@ function deleteTask(team,member,dayIdx,taskIdx){
   refreshCell(team,member,dayIdx);renderSummary();
 }
 function toggleVapaa(team,member,dayIdx,taskIdx){
-  if(isPastWeek())return;
+  if(isReadonly())return;
   const wd=getWeekData(currentMonday);
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(!tasks[taskIdx])return;
@@ -542,12 +550,12 @@ function toggleVapaa(team,member,dayIdx,taskIdx){
   refreshCell(team,member,dayIdx);renderSummary();
 }
 function updateTeamComment(team,dayIdx,val){
-  if(isPastWeek())return;
+  if(isReadonly())return;
   setTeamComment(getWeekData(currentMonday),team,dayIdx,val);
   queueCell(mondayKey(currentMonday),'teamcomment__'+team+'__'+dayIdx,val);
 }
 function updateKaupat(member,dayIdx,val){
-  if(isPastWeek())return;
+  if(isReadonly())return;
   setKaupat(getWeekData(currentMonday),member,dayIdx,val);
   queueCell(mondayKey(currentMonday),'kaupat__'+member+'__'+dayIdx,val);
   const el=document.getElementById('ksum_'+member);
@@ -683,13 +691,27 @@ if(state.weeks[wk]&&state.weeks[wk].cells){
 render();
 }
 
+function unlockWeek(){
+  const pw=prompt('Syötä salasana viikon muokkaukseen:');
+  if(pw===null)return;
+  if(pw!==RESET_PASSWORD){alert('Väärä salasana.');return;}
+  unlockedWeeks.add(mondayKey(currentMonday));
+  render();
+}
+
 function render(){
   const dates=getWeekDates(currentMonday);
-  const wNum=getWeekNum(currentMonday);const isCur=isCurrentWeek();const readonly=isPastWeek();
+  const wNum=getWeekNum(currentMonday);const isCur=isCurrentWeek();const readonly=isReadonly();
   document.getElementById('weekInfo').innerHTML='Viikko '+wNum+', '+dates[0].getFullYear()+'<span>'+fmt(dates[0])+' – '+fmt(dates[6])+(isCur?' &nbsp;&#9679; kuluva viikko':isFutureWeek()?' &nbsp;&#128196; suunnitelma':' &nbsp;(arkisto)')+'</span>';
   document.getElementById('btnNext').disabled=false;
   ['teamSelect','newMember'].forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=readonly;});
   document.getElementById('readonlyNote').style.display=readonly?'inline-block':'none';
+  // Päivitä unlock-painikkeen teksti jos viikko on avattu
+  const unlockBtn=document.querySelector('#readonlyNote button');
+  if(unlockBtn){
+    if(isUnlocked()){unlockBtn.textContent='&#128275; Muokkaustila päällä';unlockBtn.style.background='#e8f5ee';unlockBtn.style.borderColor='#2d7a4f';unlockBtn.style.color='#2d7a4f';unlockBtn.onclick=function(){unlockedWeeks.delete(mondayKey(currentMonday));render();};}
+    else{unlockBtn.innerHTML='&#128273; Avaa muokkaukseen';unlockBtn.style.background='#fff8ee';unlockBtn.style.borderColor='#c8a060';unlockBtn.style.color='#a05c00';unlockBtn.onclick=unlockWeek;}
+  }
   initHeader(dates);renderRows(dates,readonly);renderTabs();renderSummary();
   getWeekData(currentMonday);
 }
