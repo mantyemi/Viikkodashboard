@@ -195,15 +195,82 @@ const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI
 const RECORD_ID='main';
 const RESET_PASSWORD='Winter_2012';
 
-async function sbFetch(method,body){
-  const url=SUPABASE_URL+'/rest/v1/dashboard_data';
-  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':method==='POST'?'resolution=merge-duplicates':''};
-  const res=await fetch(url+(method==='GET'?'?id=eq.'+RECORD_ID+'&select=data':''),{method,headers,body:body?JSON.stringify(body):undefined});
+// ---- Supabase cell-level API ----
+const SB_HEADERS={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'};
+
+// Tallenna yksi solu: id = "viikkoavain__solunnimi"
+async function sbSaveCell(weekKey, cellId, value){
+  const id=weekKey+'__'+cellId;
+  const res=await fetch(SUPABASE_URL+'/rest/v1/dashboard_cells',{
+    method:'POST',
+    headers:{...SB_HEADERS,'Prefer':'resolution=merge-duplicates'},
+    body:JSON.stringify({id,value,updated_at:new Date().toISOString()})
+  });
   if(!res.ok) throw new Error('HTTP '+res.status);
-  return method==='GET'?res.json():res;
 }
-async function loadFromSupabase(){const rows=await sbFetch('GET');return rows&&rows.length>0?rows[0].data:null;}
-async function saveToSupabase(data){await sbFetch('POST',{id:RECORD_ID,data,updated_at:new Date().toISOString()});}
+
+// Tallenna tiimin kokoonpano erikseen (ei viikkokohtainen)
+async function sbSaveTeams(teams){
+  const res=await fetch(SUPABASE_URL+'/rest/v1/dashboard_cells',{
+    method:'POST',
+    headers:{...SB_HEADERS,'Prefer':'resolution=merge-duplicates'},
+    body:JSON.stringify({id:'__teams__',value:teams,updated_at:new Date().toISOString()})
+  });
+  if(!res.ok) throw new Error('HTTP '+res.status);
+}
+
+// Lataa kaikki solut
+async function sbLoadAll(){
+  const res=await fetch(SUPABASE_URL+'/rest/v1/dashboard_cells?select=id,value,updated_at',{headers:SB_HEADERS});
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return res.json();
+}
+
+// Rakenna state riveistä
+function buildStateFromRows(rows){
+  const s={teams:{kohde:[],dynamo:[]},weeks:{}};
+  rows.forEach(row=>{
+    if(row.id==='__teams__'){s.teams=row.value;return;}
+    // id muoto: "2025-W21__solunnimi"
+    const sep=row.id.indexOf('__');
+    if(sep===-1)return;
+    const weekKey=row.id.substring(0,sep);
+    const cellId=row.id.substring(sep+2);
+    if(!s.weeks[weekKey])s.weeks[weekKey]={cells:{},updated_at:{}};
+    s.weeks[weekKey].cells[cellId]=row.value;
+    s.weeks[weekKey].updated_at[cellId]=row.updated_at;
+  });
+  return s;
+}
+
+// Hae viimeisin updated_at per viikko
+async function sbGetLatestUpdates(){
+  const res=await fetch(SUPABASE_URL+'/rest/v1/dashboard_cells?select=id,updated_at',{headers:SB_HEADERS});
+  if(!res.ok)return null;
+  return res.json();
+}
+
+// Vanha yhteensopivuus: lataa vanha dashboard_data ja migroi dashboard_cells:iin
+async function migrateOldData(){
+  try{
+    const res=await fetch(SUPABASE_URL+'/rest/v1/dashboard_data?id=eq.main&select=data',{headers:SB_HEADERS});
+    if(!res.ok)return false;
+    const rows=await res.json();
+    if(!rows||!rows.length||!rows[0].data)return false;
+    const old=rows[0].data;
+    if(!old.weeks||!Object.keys(old.weeks).length)return false;
+    console.log('Migroidaan vanha data...');
+    if(old.teams) await sbSaveTeams(old.teams);
+    for(const [weekKey,weekData] of Object.entries(old.weeks)){
+      if(!weekData.cells)continue;
+      for(const [cellId,value] of Object.entries(weekData.cells)){
+        await sbSaveCell(weekKey,cellId,value);
+      }
+    }
+    console.log('Migraatio valmis.');
+    return true;
+  }catch(e){console.log('Migraatio epäonnistui:',e);return false;}
+}
 
 const DAYS=['Ma','Ti','Ke','To','Pe','La','Su'];
 function getMondayOf(date){const d=new Date(date);d.setHours(0,0,0,0);const day=d.getDay();d.setDate(d.getDate()+(day===0?-6:1-day));return d;}
@@ -220,8 +287,43 @@ const isCurrentWeek=()=>currentMonday.getTime()===todayMonday.getTime();
 const isPastWeek=()=>currentMonday.getTime()<todayMonday.getTime();
 const isFutureWeek=()=>currentMonday.getTime()>todayMonday.getTime();
 
+// Solukohtainen tallennus — tallentaa vain muuttuneet solut
+const pendingCells={}; // weekKey__cellId -> value
 let saveTimer=null;
-function scheduleSave(){setSyncStatus('saving');clearTimeout(saveTimer);saveTimer=setTimeout(async()=>{try{await saveToSupabase(state);setSyncStatus('ok');}catch(e){setSyncStatus('error');}},800);}
+
+function queueCell(weekKey,cellId,value){
+  pendingCells[weekKey+'__'+cellId]=value;
+  scheduleSave();
+}
+function queueTeams(){
+  pendingCells['__teams__']=state.teams;
+  scheduleSave();
+}
+
+function scheduleSave(){
+  setSyncStatus('saving');
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(async()=>{
+    const toSave=Object.entries(pendingCells);
+    if(!toSave.length){setSyncStatus('ok');return;}
+    // Tyhjennä pending ennen tallennusta
+    Object.keys(pendingCells).forEach(k=>delete pendingCells[k]);
+    try{
+      await Promise.all(toSave.map(([id,value])=>{
+        if(id==='__teams__') return sbSaveTeams(value);
+        const sep=id.indexOf('__');
+        const weekKey=id.substring(0,sep);
+        const cellId=id.substring(sep+2);
+        return sbSaveCell(weekKey,cellId,value);
+      }));
+      setSyncStatus('ok');
+    }catch(e){
+      setSyncStatus('error');
+      // Palauta pending jos tallennus epäonnistui
+      toSave.forEach(([id,value])=>pendingCells[id]=value);
+    }
+  },600);
+}
 function setSyncStatus(s){const el=document.getElementById('syncStatus');if(!el)return;const m={ok:{cls:'ok',text:'&#10003; Tallennettu'},saving:{cls:'saving',text:'&#8635; Tallennetaan...'},error:{cls:'error',text:'&#9888; Tallennusvirhe'},loading:{cls:'loading',text:'&#9679; Yhdistetään...'},live:{cls:'ok',text:'&#9679; Reaaliaikainen'}};const x=m[s]||m.ok;el.className='sync-status '+x.cls;el.innerHTML=x.text;}
 
 function getWeekData(monday){const key=mondayKey(monday);if(!state.weeks[key])state.weeks[key]={cells:{}};return state.weeks[key];}
@@ -409,15 +511,17 @@ function updateTask(team,member,dayIdx,taskIdx,field,value){
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(!tasks[taskIdx])return;
   tasks[taskIdx][field]=value;
-  scheduleSave();
+  queueCell(mondayKey(currentMonday),cellKey(team,member,dayIdx),tasks);
   refreshBadge(team,member,dayIdx,taskIdx,tasks[taskIdx]);
   renderSummary();
 }
 function addTask(team,member,dayIdx){
   if(isPastWeek())return;
   const wd=getWeekData(currentMonday);
-  getCellTasks(wd,team,member,dayIdx).push({task:'',kpl:'',target:'',vapaa:false});
-  scheduleSave();refreshCell(team,member,dayIdx);renderSummary();
+  const tasks=getCellTasks(wd,team,member,dayIdx);
+  tasks.push({task:'',kpl:'',target:'',vapaa:false});
+  queueCell(mondayKey(currentMonday),cellKey(team,member,dayIdx),tasks);
+  refreshCell(team,member,dayIdx);renderSummary();
 }
 function deleteTask(team,member,dayIdx,taskIdx){
   if(isPastWeek())return;
@@ -425,7 +529,8 @@ function deleteTask(team,member,dayIdx,taskIdx){
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(tasks.length<=1)return;
   tasks.splice(taskIdx,1);
-  scheduleSave();refreshCell(team,member,dayIdx);renderSummary();
+  queueCell(mondayKey(currentMonday),cellKey(team,member,dayIdx),tasks);
+  refreshCell(team,member,dayIdx);renderSummary();
 }
 function toggleVapaa(team,member,dayIdx,taskIdx){
   if(isPastWeek())return;
@@ -433,17 +538,18 @@ function toggleVapaa(team,member,dayIdx,taskIdx){
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(!tasks[taskIdx])return;
   tasks[taskIdx].vapaa=!tasks[taskIdx].vapaa;
-  scheduleSave();refreshCell(team,member,dayIdx);renderSummary();
+  queueCell(mondayKey(currentMonday),cellKey(team,member,dayIdx),tasks);
+  refreshCell(team,member,dayIdx);renderSummary();
 }
 function updateTeamComment(team,dayIdx,val){
   if(isPastWeek())return;
   setTeamComment(getWeekData(currentMonday),team,dayIdx,val);
-  scheduleSave();
+  queueCell(mondayKey(currentMonday),'teamcomment__'+team+'__'+dayIdx,val);
 }
 function updateKaupat(member,dayIdx,val){
   if(isPastWeek())return;
   setKaupat(getWeekData(currentMonday),member,dayIdx,val);
-  scheduleSave();
+  queueCell(mondayKey(currentMonday),'kaupat__'+member+'__'+dayIdx,val);
   const el=document.getElementById('ksum_'+member);
   if(el)el.textContent=kaupatSum(getWeekData(currentMonday),member);
 }
@@ -538,7 +644,7 @@ function startEdit(team,oldName,el){
         });
         newWeeks[wk]={cells:nc};
       });
-      state.weeks=newWeeks;scheduleSave();render();
+      state.weeks=newWeeks;queueTeams();render();
     } else {
       const span=document.createElement('span');span.className='member-label';span.textContent=oldName;
       span.title='Klikkaa muokataksesi';span.onclick=function(){startEdit(team,oldName,this);};inp.replaceWith(span);
@@ -551,11 +657,11 @@ function addMember(){
   const team=document.getElementById('teamSelect').value;
   const inp=document.getElementById('newMember');const name=inp.value.trim();
   if(!name||state.teams[team].includes(name))return;
-  state.teams[team].push(name);scheduleSave();inp.value='';render();
+  state.teams[team].push(name);queueTeams();inp.value='';render();
 }
 function removeMember(team,member){
   if(!confirm(member+' poistetaan tiimistä. Jatketaanko?'))return;
-  state.teams[team]=state.teams[team].filter(m=>m!==member);scheduleSave();render();
+  state.teams[team]=state.teams[team].filter(m=>m!==member);queueTeams();render();
 }
 function resetWeek(){
   if(isPastWeek()){alert('Voit tyhjentää vain kuluvan tai tulevan viikon.');return;}
@@ -563,7 +669,18 @@ function resetWeek(){
   if(pw===null)return;
   if(pw!==RESET_PASSWORD){alert('Väärä salasana.');return;}
   if(!confirm('Tyhjennetäänkö kaikki tämän viikon tiedot?'))return;
-  state.weeks[mondayKey(currentMonday)]={cells:{}};scheduleSave();render();
+  // Tyhjennä kaikki viikon solut Supabasesta
+const wk=mondayKey(currentMonday);
+if(state.weeks[wk]&&state.weeks[wk].cells){
+  const delIds=Object.keys(state.weeks[wk].cells).map(c=>wk+'__'+c);
+  state.weeks[wk]={cells:{}};
+  // Poista solut Supabasesta
+  Promise.all(delIds.map(id=>
+    fetch(SUPABASE_URL+'/rest/v1/dashboard_cells?id=eq.'+encodeURIComponent(id),{method:'DELETE',headers:SB_HEADERS})
+  )).then(()=>setSyncStatus('ok')).catch(()=>setSyncStatus('error'));
+  setSyncStatus('saving');
+} else { state.weeks[wk]={cells:{}}; }
+render();
 }
 
 function render(){
@@ -577,13 +694,37 @@ function render(){
   getWeekData(currentMonday);
 }
 
-let lastUpdated=null;
+// Solukohtainen polling — hakee vain muuttuneet solut
+let lastPollTime=null;
+
 async function pollUpdates(){
+  if(saveTimer)return; // Oma tallennus käynnissä
   try{
-    const res=await fetch(SUPABASE_URL+'/rest/v1/dashboard_data?id=eq.'+RECORD_ID+'&select=data,updated_at',{headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}});
-    if(!res.ok)return;const rows=await res.json();if(!rows||!rows.length)return;
-    const remote=rows[0];
-    if(remote.updated_at!==lastUpdated){lastUpdated=remote.updated_at;if(saveTimer)return;const rs=remote.data;if(rs){state=ensureTeams(rs);render();setSyncStatus('live');}}
+    const timeFilter=lastPollTime?'&updated_at=gt.'+encodeURIComponent(lastPollTime):'';
+    const res=await fetch(SUPABASE_URL+'/rest/v1/dashboard_cells?select=id,value,updated_at&order=updated_at.desc'+timeFilter,{headers:SB_HEADERS});
+    if(!res.ok)return;
+    const rows=await res.json();
+    if(!rows||!rows.length)return;
+    lastPollTime=rows[0].updated_at;
+    let changed=false;
+    rows.forEach(row=>{
+      if(row.id==='__teams__'){
+        // Älä ylikirjoita tiimejä jos on omia muutoksia jonossa
+        if(!pendingCells['__teams__']){state.teams=row.value;changed=true;}
+        return;
+      }
+      const sep=row.id.indexOf('__');
+      if(sep===-1)return;
+      const weekKey=row.id.substring(0,sep);
+      const cellId=row.id.substring(sep+2);
+      // Älä ylikirjoita jos on pending muutos
+      const pendKey=weekKey+'__'+cellId;
+      if(pendingCells[pendKey])return;
+      if(!state.weeks[weekKey])state.weeks[weekKey]={cells:{}};
+      state.weeks[weekKey].cells[cellId]=row.value;
+      changed=true;
+    });
+    if(changed){render();setSyncStatus('live');}
   }catch(e){}
 }
 
@@ -607,13 +748,32 @@ function ensureTeams(s){
 }
 async function init(){
   try{
-    const remote=await loadFromSupabase();
-    if(remote){state=cleanOldWeeks(ensureTeams(remote));lastUpdated=new Date().toISOString();await saveToSupabase(state);}
-    else{state=ensureTeams(state);await saveToSupabase(state);}
+    const rows=await sbLoadAll();
+    if(rows&&rows.length>0){
+      const built=buildStateFromRows(rows);
+      state=cleanOldWeeks(ensureTeams(built));
+      // Aseta lastPollTime viimeisimmän muutoksen mukaan
+      const times=rows.map(r=>r.updated_at).filter(Boolean).sort();
+      if(times.length) lastPollTime=times[times.length-1];
+    } else {
+      // Tarkista onko vanhaa dataa dashboard_data-taulussa
+      const migrated=await migrateOldData();
+      if(!migrated){
+        // Ei dataa lainkaan — tallenna oletustiimit
+        await sbSaveTeams(state.teams);
+      } else {
+        // Lataa uudelleen migraation jälkeen
+        const rows2=await sbLoadAll();
+        if(rows2&&rows2.length>0){
+          state=cleanOldWeeks(ensureTeams(buildStateFromRows(rows2)));
+        }
+      }
+    }
     setSyncStatus('live');
-  }catch(e){setSyncStatus('error');}
+  }catch(e){console.error(e);setSyncStatus('error');}
   document.getElementById('loadingOverlay').style.display='none';
-  render();setInterval(pollUpdates,10000);
+  render();
+  setInterval(pollUpdates,8000);
 }
 init();
 </script>
