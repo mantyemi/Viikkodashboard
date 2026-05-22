@@ -39,6 +39,8 @@ body { font-family: system-ui, sans-serif; background: #f7f5f5; padding: 24px 16
 .week-tab:hover { background: var(--brand-light); }
 .week-tab.active { background: var(--brand); color: #fff; border-color: var(--brand); font-weight: 500; }
 .week-tab.current::after { content: ' ●'; font-size: 8px; vertical-align: middle; }
+.week-tab.future { border-style: dashed; color: #888; }
+.week-tab.future.active { background: var(--brand-mid); border-style: solid; }
 
 .summary-bar { background: #fff; border: 0.5px solid #d9b8bb; border-top: none; padding: 10px 18px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 42px; }
 .summary-bar .sb-label { font-size: 11px; color: var(--brand-mid); font-weight: 500; margin-right: 4px; }
@@ -215,6 +217,8 @@ let state={teams:{kohde:['Aino K.','Emilia S.','Jasmin Ha','Jasmin Hu','Linda L.
 const todayMonday=getMondayOf(new Date());
 let currentMonday=getMondayOf(new Date());
 const isCurrentWeek=()=>currentMonday.getTime()===todayMonday.getTime();
+const isPastWeek=()=>currentMonday.getTime()<todayMonday.getTime();
+const isFutureWeek=()=>currentMonday.getTime()>todayMonday.getTime();
 
 let saveTimer=null;
 function scheduleSave(){setSyncStatus('saving');clearTimeout(saveTimer);saveTimer=setTimeout(async()=>{try{await saveToSupabase(state);setSyncStatus('ok');}catch(e){setSyncStatus('error');}},800);}
@@ -400,7 +404,7 @@ function refreshBadge(team,member,dayIdx,taskIdx,task){
 }
 
 function updateTask(team,member,dayIdx,taskIdx,field,value){
-  if(!isCurrentWeek())return;
+  if(isPastWeek())return;
   const wd=getWeekData(currentMonday);
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(!tasks[taskIdx])return;
@@ -410,13 +414,13 @@ function updateTask(team,member,dayIdx,taskIdx,field,value){
   renderSummary();
 }
 function addTask(team,member,dayIdx){
-  if(!isCurrentWeek())return;
+  if(isPastWeek())return;
   const wd=getWeekData(currentMonday);
   getCellTasks(wd,team,member,dayIdx).push({task:'',kpl:'',target:'',vapaa:false});
   scheduleSave();refreshCell(team,member,dayIdx);renderSummary();
 }
 function deleteTask(team,member,dayIdx,taskIdx){
-  if(!isCurrentWeek())return;
+  if(isPastWeek())return;
   const wd=getWeekData(currentMonday);
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(tasks.length<=1)return;
@@ -424,7 +428,7 @@ function deleteTask(team,member,dayIdx,taskIdx){
   scheduleSave();refreshCell(team,member,dayIdx);renderSummary();
 }
 function toggleVapaa(team,member,dayIdx,taskIdx){
-  if(!isCurrentWeek())return;
+  if(isPastWeek())return;
   const wd=getWeekData(currentMonday);
   const tasks=getCellTasks(wd,team,member,dayIdx);
   if(!tasks[taskIdx])return;
@@ -432,12 +436,12 @@ function toggleVapaa(team,member,dayIdx,taskIdx){
   scheduleSave();refreshCell(team,member,dayIdx);renderSummary();
 }
 function updateTeamComment(team,dayIdx,val){
-  if(!isCurrentWeek())return;
+  if(isPastWeek())return;
   setTeamComment(getWeekData(currentMonday),team,dayIdx,val);
   scheduleSave();
 }
 function updateKaupat(member,dayIdx,val){
-  if(!isCurrentWeek())return;
+  if(isPastWeek())return;
   setKaupat(getWeekData(currentMonday),member,dayIdx,val);
   scheduleSave();
   const el=document.getElementById('ksum_'+member);
@@ -494,7 +498,7 @@ function renderSummary(){
   });
 }
 
-function changeWeek(dir){const next=new Date(currentMonday);next.setDate(next.getDate()+dir*7);if(next>todayMonday)return;currentMonday=next;render();}
+function changeWeek(dir){const next=new Date(currentMonday);next.setDate(next.getDate()+dir*7);currentMonday=next;render();}
 function jumpToWeek(ts){currentMonday=new Date(ts);render();}
 
 function renderTabs(){
@@ -502,12 +506,16 @@ function renderTabs(){
   const weeks=[];const curKey=mondayKey(todayMonday);
   Object.keys(state.weeks).forEach(key=>{const hasData=state.weeks[key]&&state.weeks[key].cells&&Object.keys(state.weeks[key].cells).length>0;if(hasData||key===curKey)weeks.push(key);});
   if(!weeks.includes(curKey))weeks.push(curKey);
+  // Lisää aina seuraava viikko tab
+  const nextMonday=new Date(todayMonday);nextMonday.setDate(nextMonday.getDate()+7);
+  const nextKey=mondayKey(nextMonday);if(!weeks.includes(nextKey))weeks.push(nextKey);
   weeks.sort().reverse().forEach(key=>{
     const[year,wStr]=key.split('-W');const wNum=parseInt(wStr);
     const monday=getMondayFromYearWeek(parseInt(year),wNum);const dates=getWeekDates(monday);
     const isActive=mondayKey(currentMonday)===key;const isCur=key===curKey;
     const tab=document.createElement('div');
-    tab.className='week-tab'+(isActive?' active':'')+(isCur?' current':'');
+    const isFut=monday.getTime()>todayMonday.getTime();
+    tab.className='week-tab'+(isActive?' active':'')+(isCur?' current':'')+(isFut?' future':'');
     tab.textContent='Vk '+wNum+' ('+fmt(dates[0])+'–'+fmt(dates[6])+')';
     tab.onclick=()=>jumpToWeek(monday.getTime());tabs.appendChild(tab);
   });
@@ -550,7 +558,7 @@ function removeMember(team,member){
   state.teams[team]=state.teams[team].filter(m=>m!==member);scheduleSave();render();
 }
 function resetWeek(){
-  if(!isCurrentWeek()){alert('Voit tyhjentää vain kuluvan viikon.');return;}
+  if(isPastWeek()){alert('Voit tyhjentää vain kuluvan tai tulevan viikon.');return;}
   const pw=prompt('Syötä salasana viikon tyhjentämiseen:');
   if(pw===null)return;
   if(pw!==RESET_PASSWORD){alert('Väärä salasana.');return;}
@@ -560,9 +568,9 @@ function resetWeek(){
 
 function render(){
   const dates=getWeekDates(currentMonday);
-  const wNum=getWeekNum(currentMonday);const isCur=isCurrentWeek();const readonly=!isCur;
-  document.getElementById('weekInfo').innerHTML='Viikko '+wNum+', '+dates[0].getFullYear()+'<span>'+fmt(dates[0])+' – '+fmt(dates[6])+(isCur?' &nbsp;&#9679; kuluva viikko':' &nbsp;(arkisto)')+'</span>';
-  document.getElementById('btnNext').disabled=isCur;
+  const wNum=getWeekNum(currentMonday);const isCur=isCurrentWeek();const readonly=isPastWeek();
+  document.getElementById('weekInfo').innerHTML='Viikko '+wNum+', '+dates[0].getFullYear()+'<span>'+fmt(dates[0])+' – '+fmt(dates[6])+(isCur?' &nbsp;&#9679; kuluva viikko':isFutureWeek()?' &nbsp;&#128196; suunnitelma':' &nbsp;(arkisto)')+'</span>';
+  document.getElementById('btnNext').disabled=false;
   ['teamSelect','newMember'].forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=readonly;});
   document.getElementById('readonlyNote').style.display=readonly?'inline-block':'none';
   initHeader(dates);renderRows(dates,readonly);renderTabs();renderSummary();
@@ -575,15 +583,33 @@ async function pollUpdates(){
     const res=await fetch(SUPABASE_URL+'/rest/v1/dashboard_data?id=eq.'+RECORD_ID+'&select=data,updated_at',{headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}});
     if(!res.ok)return;const rows=await res.json();if(!rows||!rows.length)return;
     const remote=rows[0];
-    if(remote.updated_at!==lastUpdated){lastUpdated=remote.updated_at;if(saveTimer)return;const rs=remote.data;if(rs){state=rs;if(!state.teams)state.teams={kohde:[],dynamo:[]};if(!state.weeks)state.weeks={};render();setSyncStatus('live');}}
+    if(remote.updated_at!==lastUpdated){lastUpdated=remote.updated_at;if(saveTimer)return;const rs=remote.data;if(rs){state=ensureTeams(rs);render();setSyncStatus('live');}}
   }catch(e){}
 }
 
+const DEFAULT_TEAMS={kohde:['Aino K.','Emilia S.','Jasmin Ha','Jasmin Hu','Linda L.','Riina S.'],dynamo:['Henna D.','Julia H.','Julius H.','Kari R.','Laura A.','Maija A.','Sanni A.']};
+function cleanOldWeeks(s){
+  if(!s.weeks)return s;
+  const keep=['2025-W21','2025-W22','2025-W23','2025-W24','2025-W25','2025-W26','2025-W27','2025-W28','2025-W29','2025-W30'];
+  Object.keys(s.weeks).forEach(k=>{
+    const wn=parseInt((k.split('-W')[1]||'0'));
+    const yr=parseInt((k.split('-W')[0])||'0');
+    if(yr===2025&&wn<=20)delete s.weeks[k];
+  });
+  return s;
+}
+function ensureTeams(s){
+  if(!s.teams) s.teams=Object.assign({},DEFAULT_TEAMS);
+  if(!s.teams.kohde||s.teams.kohde.length===0) s.teams.kohde=DEFAULT_TEAMS.kohde.slice();
+  if(!s.teams.dynamo||s.teams.dynamo.length===0) s.teams.dynamo=DEFAULT_TEAMS.dynamo.slice();
+  if(!s.weeks) s.weeks={};
+  return s;
+}
 async function init(){
   try{
     const remote=await loadFromSupabase();
-    if(remote){state=remote;if(!state.teams)state.teams={kohde:['Aino K.','Emilia S.','Jasmin Ha','Jasmin Hu','Linda L.','Riina S.'],dynamo:['Henna D.','Julia H.','Julius H.','Kari R.','Laura A.','Maija A.','Sanni A.']};if(!state.weeks)state.weeks={};lastUpdated=new Date().toISOString();}
-    else{await saveToSupabase(state);}
+    if(remote){state=cleanOldWeeks(ensureTeams(remote));lastUpdated=new Date().toISOString();await saveToSupabase(state);}
+    else{state=ensureTeams(state);await saveToSupabase(state);}
     setSyncStatus('live');
   }catch(e){setSyncStatus('error');}
   document.getElementById('loadingOverlay').style.display='none';
